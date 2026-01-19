@@ -5,8 +5,10 @@ import {
   getVacancy,
   applyToVacancy,
   applyBatch,
+  autoApply,
   type VacancySearchParams,
 } from "@/api/vacancies"
+import type { AutoApplyRequest } from "@/api/types"
 import { toast } from "@/components/ui/use-toast"
 import { useUiStore } from "@/store/uiStore"
 
@@ -89,6 +91,30 @@ export function useApplyBatch() {
       toast({
         title: data.success ? "Отклики отправлены" : "Ошибка",
         description: data.message,
+      })
+    },
+    onError: (error) => {
+      toast({
+        title: "Ошибка",
+        description: error.message,
+        variant: "destructive",
+      })
+    },
+  })
+}
+
+export function useAutoApply() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (request: AutoApplyRequest) => autoApply(request),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["negotiations"] })
+      queryClient.invalidateQueries({ queryKey: ["vacancies"] })
+      toast({
+        title: data.success ? "Автооотклики завершены" : "Ошибка",
+        description: data.message,
+        variant: data.success ? "default" : "destructive",
       })
     },
     onError: (error) => {

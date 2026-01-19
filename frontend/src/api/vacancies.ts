@@ -1,5 +1,12 @@
 import { apiGet, apiPost } from "./client"
-import type { PaginatedResponse, Vacancy, VacancyBrief, SuccessResponse } from "./types"
+import type {
+  PaginatedResponse,
+  Vacancy,
+  VacancyBrief,
+  SuccessResponse,
+  AutoApplyRequest,
+  AutoApplyResponse,
+} from "./types"
 
 export interface VacancySearchParams {
   text?: string
@@ -64,4 +71,10 @@ export async function applyBatch(
     message,
     use_ai_message: useAiMessage,
   })
+}
+
+export async function autoApply(
+  request: AutoApplyRequest
+): Promise<AutoApplyResponse> {
+  return apiPost<AutoApplyResponse>("/vacancies/auto-apply", request)
 }

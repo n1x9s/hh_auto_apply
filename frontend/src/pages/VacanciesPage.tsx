@@ -5,7 +5,9 @@ import {
   useSearchVacancies,
   useApplyToVacancy,
   useApplyBatch,
+  useAutoApply,
 } from "@/hooks/useVacancies"
+import type { AutoApplyResponse } from "@/api/types"
 import { useUiStore } from "@/store/uiStore"
 import {
   Card,
@@ -31,7 +33,25 @@ import {
   Send,
   CheckSquare,
   Square,
+  Zap,
+  CheckCircle,
+  XCircle,
+  AlertCircle,
+  Loader2,
 } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { Textarea } from "@/components/ui/textarea"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { formatSalary, formatDate } from "@/lib/utils"
 import type { VacancyBrief } from "@/api/types"
 
@@ -131,6 +151,14 @@ export default function VacanciesPage() {
   const [activeTab, setActiveTab] = useState("similar")
   const [page, setPage] = useState(0)
 
+  // Auto-apply state
+  const [autoApplyOpen, setAutoApplyOpen] = useState(false)
+  const [dryRun, setDryRun] = useState(true)
+  const [messageTemplate, setMessageTemplate] = useState("")
+  const [totalPages2, setTotalPages2] = useState(5)
+  const [autoApplyResult, setAutoApplyResult] =
+    useState<AutoApplyResponse | null>(null)
+
   const { data: resumes } = useResumes()
   const {
     selectedResumeId,
@@ -153,6 +181,7 @@ export default function VacanciesPage() {
 
   const applyMutation = useApplyToVacancy()
   const applyBatchMutation = useApplyBatch()
+  const autoApplyMutation = useAutoApply()
 
   const vacancies =
     activeTab === "similar" ? similarData?.items : searchData?.items
@@ -176,6 +205,28 @@ export default function VacanciesPage() {
     })
   }
 
+  const handleAutoApply = () => {
+    autoApplyMutation.mutate(
+      {
+        resume_id: selectedResumeId || undefined,
+        dry_run: dryRun,
+        message_template: messageTemplate || undefined,
+        total_pages: totalPages2,
+        per_page: 50,
+      },
+      {
+        onSuccess: (data) => {
+          setAutoApplyResult(data)
+        },
+      }
+    )
+  }
+
+  const resetAutoApply = () => {
+    setAutoApplyResult(null)
+    setDryRun(true)
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -185,6 +236,239 @@ export default function VacanciesPage() {
             Поиск и отклик на вакансии
           </p>
         </div>
+        <Dialog
+          open={autoApplyOpen}
+          onOpenChange={(open) => {
+            setAutoApplyOpen(open)
+            if (!open) resetAutoApply()
+          }}
+        >
+          <DialogTrigger asChild>
+            <Button>
+              <Zap className="h-4 w-4 mr-2" />
+              Автооткликов
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Автоматические отклики</DialogTitle>
+              <DialogDescription>
+                Автоматически откликнуться на все подходящие вакансии. Вакансии
+                с тестами, в архиве и с перенаправлением будут пропущены.
+              </DialogDescription>
+            </DialogHeader>
+
+            {!autoApplyResult ? (
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Резюме</Label>
+                  <Select
+                    value={selectedResumeId || "all"}
+                    onValueChange={(v) =>
+                      setSelectedResumeId(v === "all" ? null : v)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Все резюме" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все опубликованные</SelectItem>
+                      {resumes?.map((resume) => (
+                        <SelectItem key={resume.id} value={resume.id}>
+                          {resume.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Страниц поиска (по 50 вакансий)</Label>
+                  <Select
+                    value={String(totalPages2)}
+                    onValueChange={(v) => setTotalPages2(Number(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="1">1 (50 вакансий)</SelectItem>
+                      <SelectItem value="3">3 (150 вакансий)</SelectItem>
+                      <SelectItem value="5">5 (250 вакансий)</SelectItem>
+                      <SelectItem value="10">10 (500 вакансий)</SelectItem>
+                      <SelectItem value="20">20 (1000 вакансий)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Шаблон сообщения (для вакансий с обязательным письмом)</Label>
+                  <Textarea
+                    placeholder="Оставьте пустым для использования стандартного сообщения"
+                    value={messageTemplate}
+                    onChange={(e) => setMessageTemplate(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label>Тестовый режим (dry run)</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Показать какие вакансии будут обработаны, не отправляя отклики
+                    </p>
+                  </div>
+                  <Switch checked={dryRun} onCheckedChange={setDryRun} />
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4 py-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <Card>
+                    <CardContent className="pt-4 text-center">
+                      <CheckCircle className="h-8 w-8 text-green-500 mx-auto mb-2" />
+                      <div className="text-2xl font-bold">
+                        {autoApplyResult.applied_count}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {dryRun ? "Будет отправлено" : "Отправлено"}
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4 text-center">
+                      <AlertCircle className="h-8 w-8 text-yellow-500 mx-auto mb-2" />
+                      <div className="text-2xl font-bold">
+                        {autoApplyResult.skipped_count}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        Пропущено
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="pt-4 text-center">
+                      <XCircle className="h-8 w-8 text-red-500 mx-auto mb-2" />
+                      <div className="text-2xl font-bold">
+                        {autoApplyResult.failed_count}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        Ошибок
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <ScrollArea className="h-64 rounded-md border p-4">
+                  <div className="space-y-2">
+                    {autoApplyResult.results.map((result, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-start gap-3 py-2 border-b last:border-0"
+                      >
+                        {result.status === "applied" && (
+                          <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+                        )}
+                        {result.status === "skipped" && (
+                          <AlertCircle className="h-5 w-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                        )}
+                        {result.status === "failed" && (
+                          <XCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm line-clamp-1">
+                            {result.vacancy_name}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {result.employer_name}
+                          </div>
+                          {result.reason && (
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {result.reason}
+                            </div>
+                          )}
+                        </div>
+                        {result.vacancy_url && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              window.open(result.vacancy_url!, "_blank")
+                            }
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+
+            <DialogFooter>
+              {!autoApplyResult ? (
+                <>
+                  <Button
+                    variant="outline"
+                    onClick={() => setAutoApplyOpen(false)}
+                  >
+                    Отмена
+                  </Button>
+                  <Button
+                    onClick={handleAutoApply}
+                    disabled={autoApplyMutation.isPending}
+                  >
+                    {autoApplyMutation.isPending && (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    )}
+                    {dryRun ? "Проверить" : "Запустить"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={resetAutoApply}>
+                    Назад
+                  </Button>
+                  {dryRun && autoApplyResult.applied_count > 0 && (
+                    <Button
+                      onClick={() => {
+                        setAutoApplyResult(null)
+                        autoApplyMutation.mutate(
+                          {
+                            resume_id: selectedResumeId || undefined,
+                            dry_run: false,
+                            message_template: messageTemplate || undefined,
+                            total_pages: totalPages2,
+                            per_page: 50,
+                          },
+                          {
+                            onSuccess: (data) => {
+                              setAutoApplyResult(data)
+                              setDryRun(false)
+                            },
+                          }
+                        )
+                      }}
+                      disabled={autoApplyMutation.isPending}
+                    >
+                      {autoApplyMutation.isPending && (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      )}
+                      Отправить отклики
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    onClick={() => setAutoApplyOpen(false)}
+                  >
+                    Закрыть
+                  </Button>
+                </>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="flex flex-wrap gap-4">

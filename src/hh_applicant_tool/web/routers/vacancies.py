@@ -10,6 +10,9 @@ from hh_applicant_tool.api.errors import ApiError
 from ..dependencies import ApiClientDep, StorageDep, ToolDep
 from ..schemas.common import PaginatedResponse
 from ..schemas.vacancies import (
+    AutoApplyProgress,
+    AutoApplyRequest,
+    AutoApplyResponse,
     Vacancy,
     VacancyApplyBatchRequest,
     VacancyApplyBatchResponse,
@@ -243,3 +246,240 @@ async def apply_batch(
         failed=failed,
         message=f"Applied to {len(applied)} vacancies, {len(failed)} failed",
     )
+
+
+@router.post("/auto-apply", response_model=AutoApplyResponse)
+async def auto_apply(
+    request: AutoApplyRequest,
+    api_client: ApiClientDep,
+    tool: ToolDep,
+    storage: StorageDep,
+) -> AutoApplyResponse:
+    """Auto-apply to similar vacancies for resume(s).
+
+    Scans similar vacancies and automatically applies to those that:
+    - Don't have tests
+    - Are not archived
+    - Don't redirect to external sites
+    - Haven't been applied to yet
+    """
+    results: list[AutoApplyProgress] = []
+    applied_count = 0
+    skipped_count = 0
+    failed_count = 0
+
+    try:
+        # Get resumes
+        resumes_response = api_client.get("/resumes/mine")
+        resumes = resumes_response.get("items", [])
+
+        # Filter by resume_id if specified
+        if request.resume_id:
+            resumes = [r for r in resumes if r["id"] == request.resume_id]
+
+        # Only published resumes
+        resumes = [r for r in resumes if r.get("status", {}).get("id") == "published"]
+
+        if not resumes:
+            return AutoApplyResponse(
+                success=False,
+                applied_count=0,
+                skipped_count=0,
+                failed_count=0,
+                results=[],
+                message="Нет опубликованных резюме",
+            )
+
+        # Default message templates
+        default_messages = [
+            "Здравствуйте! Меня заинтересовала ваша вакансия. Хотелось бы обсудить возможность сотрудничества.",
+            "Добрый день! Прошу рассмотреть мою кандидатуру на данную вакансию.",
+        ]
+
+        for resume in resumes:
+            resume_id = resume["id"]
+
+            # Get similar vacancies
+            for page in range(request.total_pages):
+                try:
+                    response = api_client.get(
+                        f"/resumes/{resume_id}/similar_vacancies",
+                        page=page,
+                        per_page=request.per_page,
+                    )
+                    vacancies = response.get("items", [])
+
+                    if not vacancies:
+                        break
+
+                    for vacancy in vacancies:
+                        vacancy_id = vacancy.get("id")
+                        vacancy_name = vacancy.get("name", "")
+                        vacancy_url = vacancy.get("alternate_url")
+                        employer = vacancy.get("employer", {})
+                        employer_name = employer.get("name", "")
+
+                        # Skip if has test
+                        if vacancy.get("has_test"):
+                            results.append(
+                                AutoApplyProgress(
+                                    vacancy_id=vacancy_id,
+                                    vacancy_name=vacancy_name,
+                                    vacancy_url=vacancy_url,
+                                    employer_name=employer_name,
+                                    status="skipped",
+                                    reason="Вакансия с тестом",
+                                )
+                            )
+                            skipped_count += 1
+                            continue
+
+                        # Skip if archived
+                        if vacancy.get("archived"):
+                            results.append(
+                                AutoApplyProgress(
+                                    vacancy_id=vacancy_id,
+                                    vacancy_name=vacancy_name,
+                                    vacancy_url=vacancy_url,
+                                    employer_name=employer_name,
+                                    status="skipped",
+                                    reason="Вакансия в архиве",
+                                )
+                            )
+                            skipped_count += 1
+                            continue
+
+                        # Skip if has redirect
+                        if vacancy.get("response_url"):
+                            results.append(
+                                AutoApplyProgress(
+                                    vacancy_id=vacancy_id,
+                                    vacancy_name=vacancy_name,
+                                    vacancy_url=vacancy_url,
+                                    employer_name=employer_name,
+                                    status="skipped",
+                                    reason="Перенаправление на внешний сайт",
+                                )
+                            )
+                            skipped_count += 1
+                            continue
+
+                        # Skip if already applied
+                        relations = vacancy.get("relations", [])
+                        if relations:
+                            results.append(
+                                AutoApplyProgress(
+                                    vacancy_id=vacancy_id,
+                                    vacancy_name=vacancy_name,
+                                    vacancy_url=vacancy_url,
+                                    employer_name=employer_name,
+                                    status="skipped",
+                                    reason="Уже откликались",
+                                )
+                            )
+                            skipped_count += 1
+                            continue
+
+                        # Dry run - don't actually apply
+                        if request.dry_run:
+                            results.append(
+                                AutoApplyProgress(
+                                    vacancy_id=vacancy_id,
+                                    vacancy_name=vacancy_name,
+                                    vacancy_url=vacancy_url,
+                                    employer_name=employer_name,
+                                    status="applied",
+                                    reason="Тестовый режим (dry run)",
+                                )
+                            )
+                            applied_count += 1
+                            continue
+
+                        # Prepare message
+                        message = ""
+                        if vacancy.get("response_letter_required"):
+                            if request.message_template:
+                                message = request.message_template
+                            else:
+                                import random
+
+                                message = random.choice(default_messages)
+
+                        # Apply
+                        try:
+                            params = {
+                                "resume_id": resume_id,
+                                "vacancy_id": vacancy_id,
+                            }
+                            if message:
+                                params["message"] = message
+
+                            api_client.post("/negotiations", **params)
+                            results.append(
+                                AutoApplyProgress(
+                                    vacancy_id=vacancy_id,
+                                    vacancy_name=vacancy_name,
+                                    vacancy_url=vacancy_url,
+                                    employer_name=employer_name,
+                                    status="applied",
+                                    reason=None,
+                                )
+                            )
+                            applied_count += 1
+                        except ApiError as e:
+                            error_str = str(e)
+                            if "limit" in error_str.lower():
+                                # Rate limit reached, stop
+                                results.append(
+                                    AutoApplyProgress(
+                                        vacancy_id=vacancy_id,
+                                        vacancy_name=vacancy_name,
+                                        vacancy_url=vacancy_url,
+                                        employer_name=employer_name,
+                                        status="failed",
+                                        reason="Достигнут лимит откликов",
+                                    )
+                                )
+                                failed_count += 1
+                                return AutoApplyResponse(
+                                    success=applied_count > 0,
+                                    applied_count=applied_count,
+                                    skipped_count=skipped_count,
+                                    failed_count=failed_count,
+                                    results=results,
+                                    message=f"Достигнут лимит откликов. Отправлено: {applied_count}",
+                                )
+                            results.append(
+                                AutoApplyProgress(
+                                    vacancy_id=vacancy_id,
+                                    vacancy_name=vacancy_name,
+                                    vacancy_url=vacancy_url,
+                                    employer_name=employer_name,
+                                    status="failed",
+                                    reason=error_str,
+                                )
+                            )
+                            failed_count += 1
+
+                    # Check if more pages
+                    if page >= response.get("pages", 0) - 1:
+                        break
+
+                except ApiError as e:
+                    logger.warning("Error getting similar vacancies: %s", e)
+                    break
+
+        return AutoApplyResponse(
+            success=applied_count > 0,
+            applied_count=applied_count,
+            skipped_count=skipped_count,
+            failed_count=failed_count,
+            results=results,
+            message=f"Отправлено откликов: {applied_count}, пропущено: {skipped_count}, ошибок: {failed_count}",
+        )
+
+    except ApiError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    except Exception as e:
+        logger.exception("Auto-apply failed")
+        raise HTTPException(status_code=500, detail=str(e))

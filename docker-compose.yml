@@ -17,3 +17,12 @@ services:
       - TERM=${TERM}
       # Если время на сервере отличается
       # - TZ=Europe/Moscow
+
+  # Веб-интерфейс
+  hh_web:
+    container_name: hh_web
+    extends: hh_applicant_tool
+    ports:
+      - "8080:8080"
+    command: hh-applicant-tool serve --host 0.0.0.0 --port 8080 --no-browser
+    restart: unless-stopped

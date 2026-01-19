@@ -42,6 +42,7 @@ import type { NegotiationBrief } from "@/api/types"
 const stateColors: Record<string, "default" | "success" | "destructive" | "warning" | "secondary"> = {
   response: "secondary",
   invitation: "success",
+  interview: "success",
   discard: "destructive",
   hired: "success",
 }
@@ -49,6 +50,7 @@ const stateColors: Record<string, "default" | "success" | "destructive" | "warni
 const stateLabels: Record<string, string> = {
   response: "Ожидает ответа",
   invitation: "Приглашение",
+  interview: "Собеседование",
   discard: "Отказ",
   hired: "Принят",
 }
@@ -281,12 +283,12 @@ export default function NegotiationsPage() {
       </div>
 
       <div className="flex gap-4">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select value={statusFilter || "all"} onValueChange={(v) => setStatusFilter(v === "all" ? "" : v)}>
           <SelectTrigger className="w-48">
             <SelectValue placeholder="Все статусы" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Все статусы</SelectItem>
+            <SelectItem value="all">Все статусы</SelectItem>
             <SelectItem value="response">Ожидают ответа</SelectItem>
             <SelectItem value="invitation">Приглашения</SelectItem>
             <SelectItem value="discard">Отказы</SelectItem>

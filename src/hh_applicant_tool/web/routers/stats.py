@@ -50,59 +50,83 @@ class StatsOverview(BaseModel):
 async def get_dashboard_stats(
     storage: StorageDep, tool: ToolDep
 ) -> DashboardStats:
-    """Get dashboard statistics."""
+    """Get dashboard statistics from HH API."""
     try:
-        # Count resumes
-        resumes = list(storage.resumes.find())
-        total_resumes = len(resumes)
-        active_resumes = len([r for r in resumes if r.status_id == "active"])
+        api_client = tool.api_client
 
-        # Count negotiations
-        negotiations = list(storage.negotiations.find())
-        total_negotiations = len(negotiations)
+        # Get resumes from API
+        resumes_response = api_client.get("/resumes/mine")
+        resumes = resumes_response.get("items", [])
+        total_resumes = len(resumes)
+        active_resumes = len(
+            [r for r in resumes if r.get("status", {}).get("id") == "published"]
+        )
+
+        # Get negotiations counts from API
+        # Get all negotiations to count
+        negotiations_response = api_client.get("/negotiations", per_page=100)
+        negotiations = negotiations_response.get("items", [])
+        total_negotiations = negotiations_response.get("found", len(negotiations))
 
         # Count by state
-        active_states = {"response", "invitation"}
+        active_states = {"response", "invitation", "interview"}
         active_negotiations = len(
-            [n for n in negotiations if n.state in active_states]
+            [n for n in negotiations if n.get("state", {}).get("id") in active_states]
         )
-        invitations = len([n for n in negotiations if n.state == "invitation"])
-        discarded = len([n for n in negotiations if n.state == "discard"])
+        invitations = len(
+            [n for n in negotiations if n.get("state", {}).get("id") in ("invitation", "interview")]
+        )
+        discarded = len(
+            [n for n in negotiations if n.get("state", {}).get("id") == "discard"]
+        )
 
         # Count negotiations by time
         now = datetime.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=today_start.weekday())
 
-        negotiations_today = len(
-            [
-                n
-                for n in negotiations
-                if n.created_at and n.created_at >= today_start
-            ]
-        )
-        negotiations_this_week = len(
-            [
-                n
-                for n in negotiations
-                if n.created_at and n.created_at >= week_start
-            ]
-        )
+        negotiations_today = 0
+        negotiations_this_week = 0
 
-        # Count employers
+        for n in negotiations:
+            created_at_str = n.get("created_at")
+            if created_at_str and isinstance(created_at_str, str):
+                try:
+                    # Parse ISO format date, handling timezone
+                    date_str = created_at_str
+                    if "+" in date_str:
+                        date_str = date_str.split("+")[0]
+                    elif "Z" in date_str:
+                        date_str = date_str.replace("Z", "")
+                    created_at = datetime.fromisoformat(date_str)
+                    if created_at >= today_start:
+                        negotiations_today += 1
+                    if created_at >= week_start:
+                        negotiations_this_week += 1
+                except (ValueError, TypeError) as e:
+                    logger.debug("Failed to parse date %s: %s", created_at_str, e)
+
+        # Count employers from local storage
         employers = list(storage.employers.find())
         total_employers = len(employers)
-        blacklisted_ids = set(tool.get_blacklisted())
-        blacklisted_employers = len(
-            [e for e in employers if str(e.id) in blacklisted_ids]
-        )
 
-        # Count contacts
+        # Get blacklisted count
+        try:
+            blacklisted_response = api_client.get("/employers/blacklisted")
+            blacklisted_employers = blacklisted_response.get("found", 0)
+        except Exception:
+            blacklisted_employers = 0
+
+        # Count contacts from local storage
         contacts = list(storage.vacancy_contacts.find())
         total_contacts = len(contacts)
 
-        # Count applied vacancies (from negotiations)
-        vacancy_ids = set(n.vacancy_id for n in negotiations if n.vacancy_id)
+        # Count applied vacancies
+        vacancy_ids = set(
+            n.get("vacancy", {}).get("id")
+            for n in negotiations
+            if n.get("vacancy", {}).get("id")
+        )
         total_vacancies_applied = len(vacancy_ids)
 
         return DashboardStats(

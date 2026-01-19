@@ -165,3 +165,30 @@ export interface SuccessResponse {
   success: boolean
   message: string
 }
+
+export interface AutoApplyRequest {
+  resume_id?: string | null
+  message_template?: string | null
+  use_ai?: boolean
+  dry_run?: boolean
+  total_pages?: number
+  per_page?: number
+}
+
+export interface AutoApplyProgress {
+  vacancy_id: number
+  vacancy_name: string
+  vacancy_url: string | null
+  employer_name: string | null
+  status: "applied" | "skipped" | "failed"
+  reason: string | null
+}
+
+export interface AutoApplyResponse {
+  success: boolean
+  applied_count: number
+  skipped_count: number
+  failed_count: number
+  results: AutoApplyProgress[]
+  message: string
+}

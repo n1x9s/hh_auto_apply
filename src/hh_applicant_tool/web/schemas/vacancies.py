@@ -100,3 +100,36 @@ class VacancyApplyBatchResponse(BaseModel):
     applied: list[int]
     failed: list[dict]
     message: str
+
+
+class AutoApplyRequest(BaseModel):
+    """Request for auto-apply to similar vacancies."""
+
+    resume_id: str | None = None  # If None, applies to all published resumes
+    message_template: str | None = None  # Template with placeholders
+    use_ai: bool = False  # Use AI for message generation
+    dry_run: bool = False  # Don't actually apply, just return results
+    total_pages: int = 5  # Pages to scan
+    per_page: int = 50
+
+
+class AutoApplyProgress(BaseModel):
+    """Progress item for auto-apply."""
+
+    vacancy_id: int
+    vacancy_name: str
+    vacancy_url: str | None = None
+    employer_name: str | None = None
+    status: str  # "applied", "skipped", "failed"
+    reason: str | None = None  # Reason for skip/failure
+
+
+class AutoApplyResponse(BaseModel):
+    """Response after auto-apply."""
+
+    success: bool
+    applied_count: int
+    skipped_count: int
+    failed_count: int
+    results: list[AutoApplyProgress]
+    message: str

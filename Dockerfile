@@ -18,12 +18,12 @@ RUN groupadd -g $GID docker && \
 
 WORKDIR /app
 
-# Копируем файлы пакета
+# Копируем файлы пакета (включая статику фронтенда в src/hh_applicant_tool/web/static)
 COPY src /app/src
 COPY pyproject.toml poetry.lock* README.md /app/
 
-# И ставим его
-RUN pip install --no-cache-dir -e '.[playwright,pillow]'
+# И ставим его (web = fastapi + uvicorn для веб-интерфейса)
+RUN pip install --no-cache-dir -e '.[playwright,pillow,web]'
 
 # Ставим зависимости хромиума и сам хромиум пользователю docker
 RUN playwright install-deps chromium && \

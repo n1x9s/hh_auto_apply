@@ -174,6 +174,16 @@ func (a *App) saveTokenIfChanged(before Token) error {
 	return a.Config.SaveToken(after)
 }
 
+func (a *App) reloadConfig() error {
+	cfg, err := LoadConfig(a.ProfileDir)
+	if err != nil {
+		return err
+	}
+	a.Config = cfg
+	a.API.SetToken(cfg.Token())
+	return nil
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {

@@ -123,6 +123,12 @@ func (c *APIClient) Token() Token {
 	}
 }
 
+func (c *APIClient) SetToken(token Token) {
+	c.accessToken = token.AccessToken
+	c.refreshToken = token.RefreshToken
+	c.expiresAt = token.AccessExpiresAt
+}
+
 func (c *APIClient) IsAccessExpired() bool {
 	return time.Now().Unix() >= c.expiresAt
 }

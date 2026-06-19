@@ -9,6 +9,7 @@ build/
 
 # Tool caches
 .gocache/
+.npm-cache/
 .cache/
 
 # Editor files

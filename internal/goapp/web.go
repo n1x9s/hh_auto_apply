@@ -35,6 +35,9 @@ func (a *App) commandServe(ctx context.Context, args []string) error {
 		return err
 	}
 	if *staticDir == "" {
+		*staticDir = os.Getenv("HH_STATIC_DIR")
+	}
+	if *staticDir == "" {
 		*staticDir = defaultStaticDir()
 	}
 
@@ -68,6 +71,7 @@ func (a *App) commandServe(ctx context.Context, args []string) error {
 
 func defaultStaticDir() string {
 	candidates := []string{
+		filepath.Join("frontend", "dist"),
 		filepath.Join("web", "static"),
 		"static",
 	}
@@ -95,6 +99,10 @@ func (s *webServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "/auth/status" && r.Method == http.MethodGet:
 		s.authStatus(w, r)
+	case path == "/auth/url" && r.Method == http.MethodGet:
+		s.authURL(w, r)
+	case path == "/auth/code" && r.Method == http.MethodPost:
+		s.authCode(w, r)
 	case path == "/auth/me" && r.Method == http.MethodGet:
 		s.proxyGET(w, r, "/me")
 	case path == "/auth/refresh" && r.Method == http.MethodPost:
@@ -190,11 +198,17 @@ func (s *webServer) handleStatic(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "bad static path")
 		return
 	}
+	serveFile := func(path string) {
+		if filepath.Base(path) == "index.html" {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		http.ServeFile(w, r, path)
+	}
 	if st, err := os.Stat(filePath); err == nil && !st.IsDir() {
-		http.ServeFile(w, r, filePath)
+		serveFile(filePath)
 		return
 	}
-	http.ServeFile(w, r, filepath.Join(s.staticDir, "index.html"))
+	serveFile(filepath.Join(s.staticDir, "index.html"))
 }
 
 func (s *webServer) handleBuiltinUI(w http.ResponseWriter, r *http.Request) {
@@ -259,6 +273,10 @@ hh-applicant-tool-go apply-similar --dry-run --search golang</pre>
 }
 
 func (s *webServer) authStatus(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.reloadConfig(); err != nil {
+		writeErr(w, err)
+		return
+	}
 	token := s.app.Config.Token()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated":           token.AccessToken != "",
@@ -268,7 +286,53 @@ func (s *webServer) authStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *webServer) authURL(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"url": s.app.API.AuthorizeURL()})
+}
+
+func (s *webServer) authCode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code string `json:"code"`
+		URL  string `json:"url"`
+	}
+	if !readBody(w, r, &req) {
+		return
+	}
+
+	code := strings.TrimSpace(req.Code)
+	if code == "" && strings.TrimSpace(req.URL) != "" {
+		parsed, err := url.Parse(strings.TrimSpace(req.URL))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid redirect URL")
+			return
+		}
+		code = parsed.Query().Get("code")
+	}
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "authorization code is required")
+		return
+	}
+
+	if err := s.app.API.Authenticate(r.Context(), code); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if err := s.app.Config.SaveToken(s.app.API.Token()); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"success":              true,
+		"message":              "Authorized successfully",
+		"access_token_expires": tokenTime(s.app.API.Token().AccessExpiresAt),
+	})
+}
+
 func (s *webServer) authRefresh(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.reloadConfig(); err != nil {
+		writeErr(w, err)
+		return
+	}
 	before := s.app.API.Token()
 	if s.app.API.IsAccessExpired() {
 		if err := s.app.API.RefreshAccessToken(r.Context()); err != nil {
@@ -618,6 +682,10 @@ func (s *webServer) deleteConfigItem(w http.ResponseWriter, r *http.Request, key
 }
 
 func (s *webServer) dashboardStats(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.reloadConfig(); err != nil {
+		writeErr(w, err)
+		return
+	}
 	stats := map[string]any{
 		"total_resumes":           0,
 		"active_resumes":          0,
@@ -684,6 +752,10 @@ func (s *webServer) emptyPaginated(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *webServer) apiCall(w http.ResponseWriter, r *http.Request, fn func() error) bool {
+	if err := s.app.reloadConfig(); err != nil {
+		writeErr(w, err)
+		return false
+	}
 	before := s.app.API.Token()
 	if err := fn(); err != nil {
 		writeErr(w, err)

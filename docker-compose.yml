@@ -1,12 +1,12 @@
 services:
-  hh_applicant_tool:
-    container_name: hh_applicant_tool
-    image: hh_applicant_tool:latest
+  hh_app:
+    container_name: hh_app
+    image: hh_app_go:latest
     build:
       context: .
       dockerfile: Dockerfile
     volumes:
-      - .:/app
+      - ./config:/app/config
       # Пробрасываем таймзону хоста
       - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
@@ -17,12 +17,13 @@ services:
       - TERM=${TERM}
       # Если время на сервере отличается
       # - TZ=Europe/Moscow
+    command: daemon
 
   # Веб-интерфейс
   hh_web:
     container_name: hh_web
-    extends: hh_applicant_tool
+    extends: hh_app
     ports:
-      - "8080:8080"
-    command: hh-applicant-tool serve --host 0.0.0.0 --port 8080 --no-browser
+      - "127.0.0.1:8080:8080"
+    command: serve --host 0.0.0.0 --port 8080
     restart: unless-stopped
